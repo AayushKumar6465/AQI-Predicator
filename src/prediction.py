@@ -1,154 +1,83 @@
-"""Prediction and visualization helpers for the AQI prediction project."""
-
-from __future__ import annotations
-
 import json
-import os
 import pickle
 from io import StringIO
-from typing import Dict, Tuple
-
 import joblib
-
-os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".matplotlib"))
-
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
 
 from src.data_preprocessing import FEATURE_COLUMNS
 
+MODELS_DIR = "models"
 
-def load_model() -> Tuple[object, object]:
-    """Load the trained model and scaler from disk."""
+
+# LOAD MODEL
+def load_model():
     try:
-        models_dir = os.path.join(os.getcwd(), "models")
-        model_path = os.path.join(models_dir, "trained_model.pkl")
-        scaler_path = os.path.join(models_dir, "scaler.pkl")
-
-        with open(model_path, "rb") as model_file:
-            model = pickle.load(model_file)
-        scaler = joblib.load(scaler_path)
-
+        model = pickle.load(open(f"{MODELS_DIR}/trained_model.pkl", "rb"))
+        scaler = joblib.load(f"{MODELS_DIR}/scaler.pkl")
         return model, scaler
-    except Exception as exc:
-        st.error(f"Unable to load model artifacts: {exc}")
+    except Exception as e:
+        st.error(f"Model load error: {e}")
         return None, None
 
 
-def predict_aqi(model: object, scaler: object, input_dict: Dict[str, float]) -> float:
-    """Generate an AQI prediction from user-provided pollutant values."""
+# PREDICTION
+def predict_aqi(model, scaler, inputs):
+    df = pd.DataFrame([inputs])
+    scaled = scaler.transform(df)
+    return float(model.predict(scaled)[0])
+
+
+# AQI CATEGORY
+def get_aqi_category(aqi):
+    if aqi <= 50:
+        return {"category": "Good", "color": "#00e400"}
+    elif aqi <= 100:
+        return {"category": "Satisfactory", "color": "#92d050"}
+    elif aqi <= 200:
+        return {"category": "Moderate", "color": "#ffff00"}
+    elif aqi <= 300:
+        return {"category": "Poor", "color": "#ff7e00"}
+    elif aqi <= 400:
+        return {"category": "Very Poor", "color": "#ff0000"}
+    else:
+        return {"category": "Severe", "color": "#7e0023"}
+
+
+# LOAD RESULTS
+def load_model_results():
     try:
-        input_df = pd.DataFrame([input_dict], columns=FEATURE_COLUMNS)
-        scaled_input = scaler.transform(input_df)
-        prediction = model.predict(scaled_input)[0]
-        return float(prediction)
-    except Exception as exc:
-        st.error(f"Unable to generate prediction: {exc}")
-        return 0.0
-
-
-def get_aqi_category(aqi_value: float) -> Dict[str, str]:
-    """Map an AQI value to its category, display color, and health advice."""
-    if aqi_value <= 50:
-        return {
-            "category": "Good",
-            "color_hex": "#00e400",
-            "advice": "Air quality is satisfactory.",
-        }
-    if aqi_value <= 100:
-        return {
-            "category": "Satisfactory",
-            "color_hex": "#92d050",
-            "advice": "Acceptable for most people.",
-        }
-    if aqi_value <= 200:
-        return {
-            "category": "Moderate",
-            "color_hex": "#ffff00",
-            "advice": "Sensitive groups may be affected.",
-        }
-    if aqi_value <= 300:
-        return {
-            "category": "Poor",
-            "color_hex": "#ff7e00",
-            "advice": "Everyone may experience effects.",
-        }
-    if aqi_value <= 400:
-        return {
-            "category": "Very Poor",
-            "color_hex": "#ff0000",
-            "advice": "Health alert for everyone.",
-        }
-    return {
-        "category": "Severe",
-        "color_hex": "#7e0023",
-        "advice": "Emergency conditions.",
-    }
-
-
-def load_model_results() -> Dict[str, object]:
-    """Load model comparison metrics from disk."""
-    try:
-        results_path = os.path.join(os.getcwd(), "models", "model_results.json")
-        with open(results_path, "r", encoding="utf-8") as file:
-            return json.load(file)
-    except Exception as exc:
-        st.error(f"Unable to load model results: {exc}")
+        return json.load(open(f"{MODELS_DIR}/model_results.json"))
+    except Exception as e:
+        st.error(f"Error loading results: {e}")
         return {}
 
 
-def create_feature_importance_chart() -> plt.Figure:
-    """Create a feature importance bar chart using the saved Random Forest model."""
+# FEATURE IMPORTANCE
+def feature_importance_plot():
+    fig, ax = plt.subplots()
+
     try:
-        model_path = os.path.join(os.getcwd(), "models", "random_forest_model.pkl")
-        with open(model_path, "rb") as file:
-            model = pickle.load(file)
+        model = pickle.load(open(f"{MODELS_DIR}/random_forest_model.pkl", "rb"))
 
-        if not hasattr(model, "feature_importances_"):
-            raise AttributeError(
-                "Saved Random Forest model does not expose feature importances."
-            )
-
-        importance_df = pd.DataFrame(
+        df = pd.DataFrame(
             {"Feature": FEATURE_COLUMNS, "Importance": model.feature_importances_}
         ).sort_values("Importance", ascending=False)
 
-        fig, ax = plt.subplots(figsize=(10, 5))
-        sns.barplot(
-            data=importance_df, x="Importance", y="Feature", palette="Greens_r", ax=ax
-        )
-        ax.set_title("Feature Importance")
-        fig.tight_layout()
-        return fig
-    except Exception as exc:
-        st.error(
-            f"Unable to create feature importance chart from the Random Forest model: {exc}"
-        )
-        fig, ax = plt.subplots(figsize=(10, 5))
-        empty_df = pd.DataFrame(
-            {"Feature": FEATURE_COLUMNS, "Importance": [0.0] * len(FEATURE_COLUMNS)}
-        )
-        sns.barplot(data=empty_df, x="Importance", y="Feature", color="#74c476", ax=ax)
-        ax.set_title("Feature Importance")
-        fig.tight_layout()
-        return fig
+        sns.barplot(data=df, x="Importance", y="Feature", ax=ax)
+
+    except Exception:
+        sns.barplot(x=[0] * len(FEATURE_COLUMNS), y=FEATURE_COLUMNS, ax=ax)
+
+    ax.set_title("Feature Importance")
+    return fig
 
 
-def export_prediction_csv(
-    input_dict: Dict[str, float], predicted_aqi: float, category: Dict[str, str]
-) -> str:
-    """Build a CSV string for the current prediction result."""
-    try:
-        payload = {
-            **input_dict,
-            "Predicted_AQI": round(predicted_aqi, 2),
-            "Category": category["category"],
-        }
-        buffer = StringIO()
-        pd.DataFrame([payload]).to_csv(buffer, index=False)
-        return buffer.getvalue()
-    except Exception as exc:
-        st.error(f"Unable to export prediction CSV: {exc}")
-        return ""
+# EXPORT CSV
+def export_csv(inputs, aqi, category):
+    data = {**inputs, "Predicted_AQI": aqi, "Category": category}
+    buffer = StringIO()
+    pd.DataFrame([data]).to_csv(buffer, index=False)
+    return buffer.getvalue()
